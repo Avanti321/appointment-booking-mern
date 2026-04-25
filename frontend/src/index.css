@@ -1,8 +1,13 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&display=swap');
 @import "tailwindcss";
 
 @theme {
   --color-primary: #5f6FFF;
   --grid-template-columns-auto: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+*{
+  font-family: Outfit;
 }
 
 .active hr{
@@ -11,4 +16,10 @@
 
 ::-webkit-scrollbar{
   @apply hidden
+}
+
+@media (max-width:740px) {
+  .active p{
+    @apply text-white bg-primary
+  }
 }
