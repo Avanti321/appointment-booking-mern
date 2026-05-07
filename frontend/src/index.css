@@ -2,12 +2,12 @@
 @import "tailwindcss";
 
 @theme {
-  --color-primary: #5f6FFF;
+  --color-primary: #7F00FF;
   --grid-template-columns-auto: repeat(auto-fill, minmax(200px, 1fr));
 }
 
 *{
-  font-family: Outfit;
+  font-family: DM Sans;
 }
 
 .active hr{
