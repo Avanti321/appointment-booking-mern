@@ -33,7 +33,7 @@ const Footer = () => {
                     <p className='text-xl font-medium mb-5'>GET IN TOUCH</p>
                     <ul>
                         <li>+91 8796754784</li>
-                        <li>abc@gmail.com</li>
+                        <li>healthQ010@gmail.com</li>
                     </ul>
                 </div>
             </div>
