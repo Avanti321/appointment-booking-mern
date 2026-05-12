@@ -26,6 +26,15 @@ const DoctorDashboard = () => {
           <img className='w-14' src={assets.patients_icon} alt='' />
           <div><p className='text-xl font-semibold text-gray-600'>{dashData.patients}</p><p className='text-gray-400'>Patients</p></div>
         </div>
+        <div className='flex items-center gap-2 bg-white p-4 min-w-52 rounded border-2 border-yellow-100 cursor-pointer hover:scale-105 transition-all'>
+          <div className='text-4xl'>⭐</div>
+          <div>
+            <p className='text-xl font-semibold text-gray-600'>
+              {dashData.averageRating ? dashData.averageRating.toFixed(1) : '—'}
+            </p>
+            <p className='text-gray-400'>Avg Rating ({dashData.totalRatings || 0} reviews)</p>
+          </div>
+        </div>
       </div>
       <div className='bg-white'>
         <div className='flex items-center gap-2.5 px-4 py-4 mt-10 rounded-t border'>

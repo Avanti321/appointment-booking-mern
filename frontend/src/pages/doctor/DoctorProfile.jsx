@@ -36,6 +36,15 @@ const DoctorProfile = () => {
             <p className='flex items-center gap-1 text-sm font-medium text-neutral-800 mt-3'>About:</p>
             <p className='text-sm text-gray-600 max-w-[700px] mt-1'>{profileData.about}</p>
           </div>
+
+          {/* ── Rating summary ── */}
+          <div className='flex items-center gap-2 mt-3'>
+            <div className='flex items-center gap-1 bg-yellow-50 border border-yellow-200 rounded-full px-3 py-1'>
+              <span className='text-yellow-400 text-sm'>{'★'.repeat(Math.round(profileData.averageRating || 0))}{'☆'.repeat(5 - Math.round(profileData.averageRating || 0))}</span>
+              <span className='text-sm font-semibold text-gray-700'>{profileData.averageRating ? profileData.averageRating.toFixed(1) : '—'}</span>
+            </div>
+            <span className='text-sm text-gray-500'>{profileData.totalRatings || 0} patient {profileData.totalRatings === 1 ? 'review' : 'reviews'}</span>
+          </div>
           <p className='text-gray-600 font-medium mt-4'>
             Appointment fee: <span className='text-gray-800'>
               {currency}{isEdit

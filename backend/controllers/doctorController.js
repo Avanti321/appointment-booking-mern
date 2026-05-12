@@ -41,7 +41,7 @@ const loginDoctor = async (req, res) => {
         const isMatch = await bcrypt.compare(password, doctor.password)
 
         if (isMatch) {
-            const token = jwt.sign({ id: doctor._id }, process.env.JWT_SECRET)
+            const token = jwt.sign({ id: doctor._id }, process.env.JWT_SECRET, { expiresIn: '7d' })
             res.json({ success: true, token })
         } else {
             return res.json({ success: false, message: 'Invalid credentials' })
@@ -122,7 +122,10 @@ const doctorDashboard = async (req, res) => {
     try {
         const { docId } = req.body
 
-        const appointments = await appointmentModel.find({ docId })
+        const [appointments, docData] = await Promise.all([
+            appointmentModel.find({ docId }),
+            doctorModel.findById(docId).select('averageRating totalRatings')
+        ])
 
         let earnings = 0
 
@@ -144,7 +147,9 @@ const doctorDashboard = async (req, res) => {
             earnings,
             appointments: appointments.length,
             patients: patients.length,
-            latestAppointments: appointments.reverse().slice(0, 5)
+            latestAppointments: appointments.reverse().slice(0, 5),
+            averageRating: docData.averageRating,
+            totalRatings: docData.totalRatings
         }
 
         res.json({ success: true, dashData })

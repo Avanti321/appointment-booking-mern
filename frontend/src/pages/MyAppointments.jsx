@@ -14,8 +14,10 @@ const MyAppointments = () => {
   const navigate = useNavigate()
 
   const [appointments, setAppointments] = useState([])
-  const [activeCall, setActiveCall]     = useState(null) // { roomId, appointmentId }
-  const [viewRx, setViewRx]             = useState(null) // prescription object
+  const [activeCall, setActiveCall]     = useState(null)
+  const [viewRx, setViewRx]             = useState(null)
+  const [ratingModal, setRatingModal]   = useState(null)
+  const [refreshing, setRefreshing]     = useState(false)
 
   const months = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -27,6 +29,7 @@ const MyAppointments = () => {
   // ── Fetch appointments ──────────────────────────────────────────────────────
   const getUserAppointments = async () => {
     try {
+      setRefreshing(true)
       const { data } = await axios.get(
         backendUrl + '/api/user/appointments',
         { headers: { token } }
@@ -37,11 +40,20 @@ const MyAppointments = () => {
     } catch (error) {
       console.log(error)
       toast.error(error.message)
+    } finally {
+      setRefreshing(false)
     }
   }
 
   useEffect(() => {
-    if (token) getUserAppointments()
+    if (token) {
+      getUserAppointments()
+
+      // Poll every 60s so the UI stays in sync with the cron job
+      // that auto-completes appointments after their slot time passes
+      const interval = setInterval(getUserAppointments, 60000)
+      return () => clearInterval(interval)
+    }
   }, [token])
 
   // ── Cancel appointment ──────────────────────────────────────────────────────
@@ -133,6 +145,27 @@ const MyAppointments = () => {
     }
   }
 
+  // ── Submit rating & review ──────────────────────────────────────────────────
+  const submitReview = async (appointmentId, rating, review) => {
+    try {
+      const { data } = await axios.post(
+        backendUrl + '/api/user/submit-review',
+        { appointmentId, rating, review },
+        { headers: { token } }
+      )
+      if (data.success) {
+        toast.success('Review submitted!')
+        setRatingModal(null)
+        getUserAppointments()
+      } else {
+        toast.error(data.message)
+      }
+    } catch (error) {
+      console.log(error)
+      toast.error(error.message)
+    }
+  }
+
   // ── View prescription ───────────────────────────────────────────────────────
   const viewPrescription = async (appointmentId) => {
     try {
@@ -154,7 +187,23 @@ const MyAppointments = () => {
   // ───────────────────────────────────────────────────────────────────────────
   return (
     <div>
-      <p className='pb-3 mt-12 font-medium text-zinc-700 border-b'>My Appointments</p>
+      <div className='flex items-center justify-between pb-3 mt-12 border-b'>
+        <p className='font-medium text-zinc-700'>My Appointments</p>
+        <button
+          onClick={getUserAppointments}
+          disabled={refreshing}
+          className='flex items-center gap-1 text-xs text-primary border border-primary rounded-full px-3 py-1 hover:bg-primary hover:text-white transition-all duration-200 disabled:opacity-50'
+        >
+          <svg
+            xmlns='http://www.w3.org/2000/svg'
+            className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`}
+            fill='none' viewBox='0 0 24 24' stroke='currentColor'
+          >
+            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' />
+          </svg>
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
 
       {/* ── Video call fullscreen overlay ── */}
       {activeCall && (
@@ -170,6 +219,15 @@ const MyAppointments = () => {
       {/* ── Prescription modal ── */}
       {viewRx && (
         <PrescriptionModal rx={viewRx} onClose={() => setViewRx(null)} />
+      )}
+
+      {/* ── Rating modal ── */}
+      {ratingModal && (
+        <RatingModal
+          docName={ratingModal.docName}
+          onSubmit={(rating, review) => submitReview(ratingModal.appointmentId, rating, review)}
+          onClose={() => setRatingModal(null)}
+        />
       )}
 
       <div>
@@ -258,6 +316,23 @@ const MyAppointments = () => {
                 <button className='sm:min-w-48 py-2 border border-green-500 rounded text-green-500'>
                   Completed
                 </button>
+              )}
+
+              {/* 8. Rate button — only after completion, before review submitted */}
+              {item.isCompleted && !item.isReviewed && (
+                <button
+                  onClick={() => setRatingModal({ appointmentId: item._id, docName: item.docData.name })}
+                  className='text-sm text-center sm:min-w-48 py-2 border border-yellow-400 rounded text-yellow-600 hover:bg-yellow-400 hover:text-white transition-all duration-300'
+                >
+                  ⭐ Rate Doctor
+                </button>
+              )}
+
+              {/* 9. Already rated badge */}
+              {item.isCompleted && item.isReviewed && (
+                <div className='sm:min-w-48 py-2 text-center text-sm text-yellow-500 border border-yellow-300 rounded flex items-center justify-center gap-1'>
+                  {'★'.repeat(item.rating)}{'☆'.repeat(5 - item.rating)} Reviewed
+                </div>
               )}
 
             </div>
@@ -360,6 +435,92 @@ const PrescriptionModal = ({ rx, onClose }) => {
             className='px-4 py-2 border text-sm rounded-lg hover:bg-gray-100'
           >
             Close
+          </button>
+        </div>
+
+      </div>
+    </div>
+  )
+}
+
+// ── Rating Modal ──────────────────────────────────────────────────────────────
+const RatingModal = ({ docName, onSubmit, onClose }) => {
+  const [hoveredStar, setHoveredStar] = useState(0)
+  const [selectedStar, setSelectedStar] = useState(0)
+  const [review, setReview] = useState('')
+
+  const labels = ['', 'Poor', 'Fair', 'Good', 'Very Good', 'Excellent']
+
+  const handleSubmit = () => {
+    if (!selectedStar) {
+      return
+    }
+    onSubmit(selectedStar, review)
+  }
+
+  return (
+    <div className='fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4'>
+      <div className='bg-white rounded-2xl shadow-2xl w-full max-w-md p-8'>
+
+        {/* Header */}
+        <div className='flex items-center justify-between mb-6'>
+          <div>
+            <h2 className='text-xl font-semibold text-gray-800'>Rate your Doctor</h2>
+            <p className='text-sm text-gray-500 mt-0.5'>How was your experience with <span className='font-medium text-gray-700'>{docName}</span>?</p>
+          </div>
+          <button onClick={onClose} className='text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100'>
+            <svg xmlns='http://www.w3.org/2000/svg' className='w-5 h-5' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' />
+            </svg>
+          </button>
+        </div>
+
+        {/* Star picker */}
+        <div className='flex flex-col items-center mb-6'>
+          <div className='flex gap-2 mb-2'>
+            {[1, 2, 3, 4, 5].map(star => (
+              <button
+                key={star}
+                onMouseEnter={() => setHoveredStar(star)}
+                onMouseLeave={() => setHoveredStar(0)}
+                onClick={() => setSelectedStar(star)}
+                className='text-4xl transition-transform hover:scale-110 focus:outline-none'
+              >
+                <span className={(hoveredStar || selectedStar) >= star ? 'text-yellow-400' : 'text-gray-300'}>
+                  ★
+                </span>
+              </button>
+            ))}
+          </div>
+          <p className={`text-sm font-medium h-5 transition-all ${selectedStar ? 'text-yellow-500' : 'text-gray-400'}`}>
+            {labels[hoveredStar || selectedStar] || 'Select a rating'}
+          </p>
+        </div>
+
+        {/* Review text */}
+        <textarea
+          value={review}
+          onChange={e => setReview(e.target.value)}
+          placeholder='Share your experience (optional)...'
+          rows={3}
+          className='w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700 resize-none focus:outline-none focus:border-primary mb-6'
+        />
+
+        {/* Actions */}
+        <div className='flex gap-3'>
+          <button
+            onClick={onClose}
+            className='flex-1 py-3 rounded-full border border-gray-300 text-gray-600 text-sm font-medium hover:bg-gray-50 transition-colors'
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!selectedStar}
+            className={`flex-1 py-3 rounded-full text-sm font-medium transition-all
+              ${selectedStar ? 'bg-primary text-white hover:opacity-90' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+          >
+            Submit Review
           </button>
         </div>
 

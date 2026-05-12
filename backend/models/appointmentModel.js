@@ -28,6 +28,9 @@ const appointmentSchema = new mongoose.Schema({
     payment:     { type: Boolean, default: false },
     isCompleted: { type: Boolean, default: false },
 
+    // ✅ Appointment type: 'online' (video) or 'offline' (OPD visit)
+    appointmentType: { type: String, enum: ['online', 'offline'], default: 'online' },
+
     // Video Call fields
     videoRoomId:        { type: String, default: null },
     videoCallStatus:    { type: String, default: "idle" },
@@ -35,8 +38,23 @@ const appointmentSchema = new mongoose.Schema({
     videoCallEndedAt:   { type: Date,   default: null },
 
     // Prescription
-    prescription: { type: prescriptionSchema, default: null }
+    prescription: { type: prescriptionSchema, default: null },
+
+    // ── Rating & Review (submitted by patient after completion) ───────────────
+    rating:     { type: Number, min: 1, max: 5, default: null },
+    review:     { type: String, default: null },
+    isReviewed: { type: Boolean, default: false }
 })
+
+// ── Indexes ───────────────────────────────────────────────────────────────────
+// Speeds up the cron job query that fetches all active (non-cancelled,
+// non-completed) appointments every minute.
+appointmentSchema.index({ cancelled: 1, isCompleted: 1 })
+
+// Speeds up per-user and per-doctor appointment lookups used across
+// the patient, doctor, and admin dashboards.
+appointmentSchema.index({ userId: 1 })
+appointmentSchema.index({ docId: 1 })
 
 const appointmentModel = mongoose.models.appointment || mongoose.model('appointment', appointmentSchema)
 
