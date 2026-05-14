@@ -76,7 +76,6 @@ const loginUser = async (req, res) => {
 }
 
 //API to get user profile data
-
 const getProfile = async (req, res) => {
     try {
 
@@ -91,7 +90,7 @@ const getProfile = async (req, res) => {
     }
 }
 
-//API to update user profile 
+//API to update user profile
 const updateProfile = async (req, res) => {
     try {
         const userId = req.body.userId
@@ -121,19 +120,35 @@ const updateProfile = async (req, res) => {
 }
 
 //API to book appointment
-
 const bookAppointment = async (req, res) => {
     try {
-        // ✅ Extract appointmentType from request body
-        const { userId, docId, slotDate, slotTime, appointmentType } = req.body
+        const { userId, docId, slotDate, slotTime, appointmentType, paymentMode } = req.body
 
         console.log('userId:', userId)
         console.log('appointmentType:', appointmentType)
+        console.log('paymentMode:', paymentMode)
 
-        // ✅ Validate appointmentType
+        // Validate appointmentType
         if (!appointmentType || !['online', 'offline'].includes(appointmentType)) {
             return res.json({ success: false, message: 'Invalid appointment type. Must be online or offline.' })
         }
+
+        // Validate paymentMode for offline appointments
+        if (appointmentType === 'offline' && paymentMode && !['online', 'cash'].includes(paymentMode)) {
+            return res.json({ success: false, message: 'Invalid payment mode' })
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // ✅ THE BUG WAS HERE — the old code had:
+        //
+        //   if (appointmentType === 'offline' && paymentMode === 'cash') {
+        //       appointmentData.payment = false   // ← appointmentData not declared yet!
+        //   }
+        //
+        // That block has been REMOVED. payment defaults to false in the model
+        // already. For cash appointments, patient confirms payment later via
+        // the /confirm-cash-payment API when they click the modal button.
+        // ─────────────────────────────────────────────────────────────────────
 
         const docData = await doctorModel.findById(docId).select('-password')
 
@@ -160,6 +175,7 @@ const bookAppointment = async (req, res) => {
         const docData_plain = docData.toObject()
         delete docData_plain.slots_booked
 
+        // ✅ paymentMode is declared INSIDE appointmentData — not before it
         const appointmentData = {
             userId,
             docId,
@@ -169,7 +185,8 @@ const bookAppointment = async (req, res) => {
             slotTime,
             slotDate,
             date: Date.now(),
-            appointmentType  // ✅ Save appointmentType to DB
+            appointmentType,
+            paymentMode: paymentMode || 'online'
         }
 
         const newAppointment = new appointmentModel(appointmentData)
@@ -186,7 +203,6 @@ const bookAppointment = async (req, res) => {
 }
 
 //API to get user appointments for frontend my-appointment
-
 const listAppointment = async (req, res) => {
     try {
         const { userId } = req.body
@@ -201,7 +217,6 @@ const listAppointment = async (req, res) => {
 }
 
 //API to cancel appointment
-
 const cancelAppointment = async (req, res) => {
     try {
         const { userId, appointmentId } = req.body
@@ -232,8 +247,6 @@ const cancelAppointment = async (req, res) => {
         res.json({ success: false, message: error.message })
     }
 }
-
-
 
 //API to make payment of appointment using razorpay
 const paymentRazorpay = async (req, res) => {
@@ -293,6 +306,45 @@ const verifyRazorpay = async (req, res) => {
     }
 }
 
+// API to confirm cash payment for offline appointments
+const confirmCashPayment = async (req, res) => {
+    try {
+        const { userId, appointmentId } = req.body
+
+        const appointment = await appointmentModel.findById(appointmentId)
+
+        if (!appointment) {
+            return res.json({ success: false, message: 'Appointment not found' })
+        }
+
+        // Only the patient who booked can confirm
+        if (appointment.userId !== userId) {
+            return res.json({ success: false, message: 'Unauthorized action' })
+        }
+
+        // Only for offline + cash appointments
+        if (appointment.appointmentType !== 'offline' || appointment.paymentMode !== 'cash') {
+            return res.json({ success: false, message: 'This action is only for cash appointments' })
+        }
+
+        if (appointment.cancelled) {
+            return res.json({ success: false, message: 'Cannot confirm payment for a cancelled appointment' })
+        }
+
+        if (appointment.payment) {
+            return res.json({ success: false, message: 'Payment already confirmed' })
+        }
+
+        await appointmentModel.findByIdAndUpdate(appointmentId, { payment: true })
+
+        res.json({ success: true, message: 'Cash payment confirmed successfully' })
+
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
 // API to submit a rating & review for a completed appointment
 const submitReview = async (req, res) => {
     try {
@@ -336,7 +388,7 @@ const submitReview = async (req, res) => {
         const newAverage = ((doctor.averageRating * doctor.totalRatings) + rating) / newTotal
 
         await doctorModel.findByIdAndUpdate(appointment.docId, {
-            averageRating: Math.round(newAverage * 10) / 10,   // round to 1 decimal
+            averageRating: Math.round(newAverage * 10) / 10,
             totalRatings: newTotal
         })
 
@@ -348,4 +400,16 @@ const submitReview = async (req, res) => {
     }
 }
 
-export { registerUser, loginUser, getProfile, updateProfile, bookAppointment, listAppointment, cancelAppointment, paymentRazorpay, verifyRazorpay, submitReview }
+export {
+    registerUser,
+    loginUser,
+    getProfile,
+    updateProfile,
+    bookAppointment,
+    listAppointment,
+    cancelAppointment,
+    paymentRazorpay,
+    verifyRazorpay,
+    confirmCashPayment,
+    submitReview
+}

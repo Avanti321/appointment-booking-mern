@@ -1,3 +1,6 @@
+// backend/server.js
+// Extended cron job to send reminder emails 1 hour before appointment
+
 import dotenv from 'dotenv'
 dotenv.config()
 
@@ -15,44 +18,43 @@ import videoRouter from './routes/videoRoute.js'
 import prescriptionRouter from './routes/prescriptionRoute.js'
 import { setupVideoSignaling } from './controllers/videoController.js'
 import appointmentModel from './models/appointmentModel.js'
+import { sendReminderEmail } from './utils/emailService.js'   // ← NEW
 
 // ── App & HTTP server ────────────────────────────────────────────────────────
-const app = express()
+const app    = express()
 const server = createServer(app)
-const port = process.env.PORT || 4000
+const port   = process.env.PORT || 4000
 
 connectDB()
 connectCloudinary()
 
-// ── CORS origin ───────────────────────────────────────────────────────────────
-// In production set FRONTEND_URL to your deployed URL.
-// In dev, Vite can start on 5173 or 5174, so we allow both.
+// ── CORS ──────────────────────────────────────────────────────────────────────
 const productionOrigin = process.env.FRONTEND_URL
 
 const allowedOrigins = productionOrigin
     ? [productionOrigin]
-    : ['http://localhost:5173', 'http://localhost:5174', 'http://127.0.0.1:5173', 'http://127.0.0.1:5174']
+    : ['http://localhost:5173', 'http://localhost:5174',
+       'http://127.0.0.1:5173', 'http://127.0.0.1:5174']
 
 const corsOptions = {
     origin: (origin, callback) => {
-        // Allow requests with no origin (mobile apps, Postman, curl)
         if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true)
         } else {
             callback(new Error(`CORS blocked: ${origin}`))
         }
     },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods:        ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'token', 'dtoken', 'atoken', 'Authorization'],
-    credentials: true,
-    preflightContinue: false,
+    credentials:    true,
+    preflightContinue:  false,
     optionsSuccessStatus: 204,
 }
 
 // ── Socket.IO ────────────────────────────────────────────────────────────────
 const io = new Server(server, {
     cors: {
-        origin: allowedOrigins,
+        origin:  allowedOrigins,
         methods: ['GET', 'POST'],
         credentials: true,
     }
@@ -74,39 +76,79 @@ app.use('/api/prescription', prescriptionRouter)
 
 app.get('/', (_req, res) => res.send('API WORKING'))
 
-// ── Auto-complete appointments cron job ───────────────────────────────────────
-// Runs every minute to check if any appointment's date+time has passed
+// ── Helper: parse slot date+time into a JS Date ───────────────────────────────
+// slotDate format: "14_5_2026"   slotTime format: "01:00 PM"
+const parseSlotDateTime = (slotDate, slotTime) => {
+    const [day, month, year]    = slotDate.split('_').map(Number)
+    const [timePart, meridiem]  = slotTime.split(' ')
+    let [hours, minutes]        = timePart.split(':').map(Number)
+
+    if (meridiem === 'PM' && hours !== 12) hours += 12
+    if (meridiem === 'AM' && hours === 12) hours  = 0
+
+    return new Date(year, month - 1, day, hours, minutes, 0, 0)
+}
+
+// ── Cron job — runs every minute ──────────────────────────────────────────────
 cron.schedule('* * * * *', async () => {
     try {
         const now = new Date()
 
-        // Fetch all active (not cancelled, not completed) appointments
+        // Fetch all active appointments in one query
         const activeAppointments = await appointmentModel.find({
-            cancelled: false,
+            cancelled:   false,
             isCompleted: false
         })
 
-        const toComplete = []
+        const toComplete      = []   // ids to auto-complete
+        const reminderPromises = []  // email send promises
 
         for (const appt of activeAppointments) {
-            // slotDate is stored as "D_M_YYYY" e.g. "11_5_2026"
-            const [day, month, year] = appt.slotDate.split('_').map(Number)
+            const slotStart = parseSlotDateTime(appt.slotDate, appt.slotTime)
+            const slotEnd   = new Date(slotStart.getTime() + 30 * 60 * 1000)  // +30 min
 
-            // slotTime is stored as "10:00 AM" / "02:30 PM"
-            const [timePart, meridiem] = appt.slotTime.split(' ')
-            let [hours, minutes] = timePart.split(':').map(Number)
-
-            if (meridiem === 'PM' && hours !== 12) hours += 12
-            if (meridiem === 'AM' && hours === 12) hours = 0
-
-            // Build the appointment end datetime (slot start + 30 min duration)
-            const apptEnd = new Date(year, month - 1, day, hours, minutes + 30, 0, 0)
-
-            if (now >= apptEnd) {
+            // ── Auto-complete: slot end time has passed ───────────────────────
+            if (now >= slotEnd) {
                 toComplete.push(appt._id)
+                continue   // no point sending reminder for a past appointment
+            }
+
+            // ── Reminder email: between 55 and 65 minutes before slot start ──
+            // The window (55–65 min) means even if the cron fires slightly late,
+            // we won't miss or double-send the reminder.
+            // We also check reminderSent flag to guarantee only one email ever.
+            const msUntilSlot = slotStart.getTime() - now.getTime()
+            const minUntil    = msUntilSlot / 60000   // convert to minutes
+
+            if (minUntil > 55 && minUntil <= 65 && !appt.reminderSent) {
+
+                // Mark reminder as sent immediately to prevent duplicate emails
+                // if the cron fires twice within the same window
+                await appointmentModel.findByIdAndUpdate(appt._id, { reminderSent: true })
+
+                const patientEmail = appt.userData?.email
+                const patientName  = appt.userData?.name  || 'Patient'
+                const docName      = appt.docData?.name   || 'your doctor'
+
+                if (patientEmail) {
+                    reminderPromises.push(
+                        sendReminderEmail({
+                            toEmail:         patientEmail,
+                            toName:          patientName,
+                            docName,
+                            slotDate:        appt.slotDate,
+                            slotTime:        appt.slotTime,
+                            appointmentType: appt.appointmentType || 'offline'
+                        }).catch(err =>
+                            // Don't let one failed email crash the whole cron
+                            console.error(`[Cron] Email failed for ${appt._id}:`, err.message)
+                        )
+                    )
+                }
             }
         }
 
+        // ── Bulk complete past appointments ───────────────────────────────────
         if (toComplete.length > 0) {
             await appointmentModel.updateMany(
                 { _id: { $in: toComplete } },
@@ -115,8 +157,14 @@ cron.schedule('* * * * *', async () => {
             console.log(`[Cron] Auto-completed ${toComplete.length} appointment(s)`)
         }
 
+        // ── Fire all reminder emails concurrently ─────────────────────────────
+        if (reminderPromises.length > 0) {
+            await Promise.allSettled(reminderPromises)
+            console.log(`[Cron] Sent ${reminderPromises.length} reminder email(s)`)
+        }
+
     } catch (error) {
-        console.error('[Cron] Auto-complete error:', error.message)
+        console.error('[Cron] Error:', error.message)
     }
 })
 
