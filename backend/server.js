@@ -29,32 +29,41 @@ connectDB()
 connectCloudinary()
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
-const productionOrigin = process.env.FRONTEND_URL
+// FRONTEND_URL can hold several URLs separated by commas
+const envOrigins = (process.env.FRONTEND_URL || '')
+    .split(',')
+    .map(o => o.trim().replace(/\/$/, ''))   // remove spaces and trailing slash
+    .filter(Boolean)
 
-const allowedOrigins = productionOrigin
-    ? [productionOrigin]
-    : ['http://localhost:5173', 'http://localhost:5174',
-       'http://127.0.0.1:5173', 'http://127.0.0.1:5174']
+const allowedOrigins = [
+    ...envOrigins,
+    'http://localhost:5173', 'http://localhost:5174',
+    'http://127.0.0.1:5173', 'http://127.0.0.1:5174',
+]
+
+const isAllowedOrigin = (origin) =>
+    !origin ||
+    allowedOrigins.includes(origin) ||
+    /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)   // all your Vercel URLs
 
 const corsOptions = {
     origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true)
-        } else {
-            callback(new Error(`CORS blocked: ${origin}`))
-        }
+        if (isAllowedOrigin(origin)) callback(null, true)
+        else callback(new Error(`CORS blocked: ${origin}`))
     },
     methods:        ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'token', 'dtoken', 'atoken', 'Authorization'],
     credentials:    true,
-    preflightContinue:  false,
     optionsSuccessStatus: 204,
 }
 
 // ── Socket.IO ────────────────────────────────────────────────────────────────
 const io = new Server(server, {
     cors: {
-        origin:  allowedOrigins,
+        origin: (origin, callback) => {
+            if (isAllowedOrigin(origin)) callback(null, true)
+            else callback(new Error(`CORS blocked: ${origin}`))
+        },
         methods: ['GET', 'POST'],
         credentials: true,
     }
