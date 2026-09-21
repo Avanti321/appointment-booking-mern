@@ -32,7 +32,7 @@ connectCloudinary()
 // FRONTEND_URL can hold several URLs separated by commas
 const envOrigins = (process.env.FRONTEND_URL || '')
     .split(',')
-    .map(o => o.trim().replace(/\/$/, ''))   // remove spaces and trailing slash
+    .map(o => o.trim().replace(/\/$/, ''))   // remove spaces and trailing slash 
     .filter(Boolean)
 
 const allowedOrigins = [
